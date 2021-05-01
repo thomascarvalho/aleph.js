@@ -1,7 +1,7 @@
 import type { Status } from 'https://deno.land/std@0.94.0/http/http_status.ts'
 import type { BufReader, BufWriter } from 'https://deno.land/std@0.94.0/io/bufio.ts'
 import type { MultipartFormData } from 'https://deno.land/std@0.94.0/mime/multipart.ts'
-import { Plugin, PluginCreator } from 'https://esm.sh/postcss@8.2.8'
+import { Plugin, PluginCreator } from 'https://esm.sh/postcss@8.2.12'
 
 /**
  * The config for the aleph server application.
@@ -51,14 +51,12 @@ export type LoaderPlugin = {
   test: RegExp
   /** `acceptHMR` enables the HMR. */
   acceptHMR?: boolean
-  /** allowPage` allows the loaded module as a page. */
+  /** allowPage` allows to load the module as a page. */
   allowPage?: boolean
-  /** `pagePathReoslve` resolves the page path. */
-  pagePathResolve?(url: string): { path: string, isIndex?: boolean }
-  /** `resolve` resolves the module content. */
-  resolve?(url: string): Uint8Array | Promise<Uint8Array>
-  /** `transform` transforms the source content. */
-  transform?(input: { url: string, content: Uint8Array, map?: Uint8Array }): LoaderTransformOutput | Promise<LoaderTransformOutput>
+  /** `resove` resolves the module url. */
+  resolve?(url: string): ResolveResult
+  /** `load` loads the source content. */
+  load?(input: { url: string, data?: any }, app: ServerApplication): LoaderOutput | Promise<LoaderOutput>
 }
 
 /**
@@ -70,7 +68,7 @@ export type ServerPlugin = {
   /** `type` specifies the plugin type. */
   type: 'server'
   /** `setup` setups the plugin. */
-  setup(plugin: ServerPluginContext): Promise<void> | void
+  setup(app: ServerApplication): Promise<void> | void
 }
 
 /**
@@ -79,9 +77,20 @@ export type ServerPlugin = {
 export type PostCSSPlugin = string | [string, any] | Plugin | PluginCreator<any>
 
 /**
- * The result of loader transform.
+ * The result of loader resove.
  */
-export type LoaderTransformOutput = {
+export type ResolveResult = {
+  url: string,
+  external?: boolean,
+  pagePath?: string,
+  isIndex?: boolean
+  data?: any,
+}
+
+/**
+ * The output of loader.
+ */
+export type LoaderOutput = {
   /** The transformed code type (default is 'js'). */
   type?: 'css' | 'js' | 'jsx' | 'ts' | 'tsx'
   /** The transformed code. */
@@ -116,11 +125,15 @@ export type ImportMap = {
 }
 
 /**
- * The config for CSS resolve.
+ * The config for CSS loader.
  */
 export type CSSOptions = {
+  /** `extractSize` specifies the extract size (default is 8k). */
+  extractSize?: number
+  /** `remoteExternal` loads remote css as external when it is true. */
+  remoteExternal?: boolean
   /** `module` enables the css module feature. */
-  modules?: false | CSSModulesOptions
+  modules?: boolean | CSSModulesOptions
   /** `postcss` specifies the postcss plugins. */
   postcss?: { plugins: PostCSSPlugin[] }
 }
@@ -150,12 +163,15 @@ export type SSROptions = {
 /**
  * An interface that aligns to the parts of the aleph server's `Application`.
  */
-export interface ServerPluginContext {
-  readonly workingDir: string
+export interface ServerApplication {
   readonly mode: 'development' | 'production'
+  readonly workingDir: string
+  readonly buildDir: string
   readonly config: Required<Config>
   readonly importMap: ImportMap
-  addModule(url: string, options?: { code?: string }): Promise<void>
+  addModule(url: string, options?: { sourceCode?: string }): Promise<void>
+  addDist(path: string, content: Uint8Array): Promise<void>
+  fetch(url: string): Promise<{ content: Uint8Array, contentType: string | null }>
   injectCode(stage: 'compilation' | 'hmr' | 'ssr', transform: (url: string, code: string) => string): void
 }
 

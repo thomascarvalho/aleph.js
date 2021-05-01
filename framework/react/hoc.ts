@@ -2,29 +2,14 @@ import {
   createElement,
   ComponentType,
   ComponentPropsWithRef,
-  ReactChild,
   ReactElement,
-  ReactFragment,
-  ReactPortal,
+  useContext,
   useEffect,
   useState
-} from 'react'
+} from 'https://esm.sh/react@17.0.2'
+import { FallbackContext } from './context.ts'
+import { isLikelyReactComponent } from './helper.ts'
 import { useDeno, useRouter } from './hooks.ts'
-
-type ReactNode = ReactChild | ReactFragment | ReactPortal
-
-// Any prop that has a default prop becomes optional, but its type is unchanged
-// Undeclared default props are augmented into the resulting allowable attributes
-// If declared props have indexed properties, ignore default props entirely as keyof gets widened
-// Wrap in an outer-level conditional type to allow distribution over props that are unions
-type Defaultize<P, D> = P extends any
-  ? string extends keyof P ? P :
-  & Pick<P, Exclude<keyof P, keyof D>>
-  & Partial<Pick<P, Extract<keyof P, keyof D>>>
-  & Partial<Pick<D, Exclude<keyof D, keyof P>>>
-  : never
-
-type ReactManagedProps<C, P> = C extends { defaultProps: infer D } ? Defaultize<P, D> : P
 
 /**
  * `withRouter` allows you to use `useRouter` hook with class component.
@@ -70,12 +55,16 @@ export function withDeno<T>(callback: () => (T | Promise<T>), revalidate?: numbe
 }
 
 /**
- * `dynamic` allows you to load a component asynchronously.
+ * `dynamic` allows you to load a component asynchronously with SSR support.
  *
- * ```tsx
+ * ```jsx
  * const MyLogo = dynamic(() => import('~/components/logo.tsx'))
  * export default function Logo() {
- *   return <MyLogo fallback={<p>loading...</p>}/>
+ *   return (
+ *     <Fallback to={<p>loading...</p>}>
+ *       <MyLogo />
+ *     </Fallback>
+ *   )
  * }
  * ```
  *
@@ -83,23 +72,40 @@ export function withDeno<T>(callback: () => (T | Promise<T>), revalidate?: numbe
  */
 export function dynamic<T extends ComponentType<any>>(
   factory: () => Promise<{ default: T }>
-): ComponentType<ReactManagedProps<T, ComponentPropsWithRef<T>> & { fallback?: ReactNode }> {
-  const DynamicComponent = ({ fallback, ...props }: ReactManagedProps<T, ComponentPropsWithRef<T>> & { fallback?: ReactNode }) => {
-    const [mod, setMod] = useState<{ default: T } | null>(null)
+): ComponentType<ComponentPropsWithRef<T>> {
+  const DynamicComponent = (props: ComponentPropsWithRef<T>) => {
+    const [mod, setMod] = useState<{ component: T } | null>(null)
+    const [err, setErr] = useState<Error | null>(null)
+    const { to } = useContext(FallbackContext)
 
     useEffect(() => {
-      factory().then(setMod)
+      factory().then(({ default: component }) => {
+        if (isLikelyReactComponent(component, false)) {
+          setMod({ component })
+        } else {
+          setErr(new Error('Missing the component exported as default'))
+        }
+      }).catch(setErr)
     }, [])
 
+    if (err !== null) {
+      return createElement(
+        'span',
+        {
+          style: {
+            color: 'red',
+            fontWeight: 'bold'
+          }
+        },
+        err.message
+      )
+    }
+
     if (mod !== null) {
-      return createElement(mod.default, props)
+      return createElement(mod.component, props)
     }
 
-    if (fallback) {
-      return fallback as unknown as ReactElement
-    }
-
-    return null
+    return to as ReactElement
   }
 
   return DynamicComponent
